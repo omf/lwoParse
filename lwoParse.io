@@ -3,6 +3,58 @@ Copyright (c) 2011, Oscar Martinez
 All rights reserved.
 */
 
+LinkList := List clone do (
+
+	_append := getSlot("append")
+	_at := getSlot("at")
+	_remove := getSlot("remove")
+	_reverse := getSlot("reverse")
+
+	append := method(o,
+		l := self last
+		f := self first
+		if(size > 0,
+			o prev := l
+			o next := f
+			f prev = o
+			l next = o
+		,
+			o prev := o
+			o next := o
+		)
+		_append(o)
+	)
+
+
+	at := method(i,
+		if(i < 0, i = size + i)
+		if(i >= size, i = i % size)
+		_at(i)
+	)
+
+
+	remove := method(o,
+		o prev next = o next
+		o next prev = o prev
+		_remove(o)
+	)
+
+	reverse := method(
+		l := self _reverse map(v, t := v prev ; v prev = v next ; v next = t ; v)
+		l setProto(LinkList)
+		l
+	)
+)
+
+Vector asString := method(
+	x .. " " .. y .. " " z
+)
+Vector asSimpleString := asString
+
+Sequence perpDotProduct := method(aVec,
+	(self x * aVec y) - (self y * aVec x)
+)
+
 SequenceCursor := Sequence clone do (
 	cursor ::= 0
 	isAtEnd ::= false
@@ -31,6 +83,11 @@ SequenceCursor := Sequence clone do (
 		)
 		self
 	)
+
+	/*_unpack := getSlot("unpack")
+	unpack := method(
+		call delegateToMehod(self, "_upack")
+	)*/
 )
 
 RawObjectSurf := Object clone do (
@@ -61,6 +118,7 @@ RawObjectSurf := Object clone do (
 	LINE ::= nil
 	ALPH ::= nil
 	VCOL ::= nil
+	BLOK ::= nil
 )
 
 RawObjectBBox := Object clone do (
@@ -78,15 +136,15 @@ RawObjectLayer := Object clone do (
 	points ::= nil
 	pols ::= nil
 	surfs := Map clone
-	uvMaps := Map clone
 	uvMaps := Map clone with("vmap", Map clone, "vmad", Map clone)
-	tags ::= nil
 	surfTags ::= nil
+	clips := Map clone
 	bbox ::= nil
 )
 
 
 RawObject := Object clone do (
+	tags ::= nil
 	layers := List clone
 	defaultLayer := RawObjectLayer clone
 
@@ -97,6 +155,8 @@ RawObject := Object clone do (
 			return layers last
 		)
 	)
+
+	getLayers := method(if(layers isEmpty return list(defaultLayer), return layers))
 )
 
 
@@ -125,8 +185,9 @@ Chunk := Object clone do (
 		if(length isOdd, setLength(length + 1))
 		writeln("[" .. self type .. "] " .. length)
 		?decode(seq read(self length), root)
-		self
 	)
+
+	decode := method(sc, root, nil)
 )
 
 SubChunk := Object clone do (
@@ -134,15 +195,11 @@ SubChunk := Object clone do (
 	read := method(seq, root,
 		setLength(seq unpack(seq cursor, "*H") first) ; seq advance(2)
 		if(length isOdd, setLength(length + 1))
-		writeln("[" .. self type .. "] " .. length)
+		writeln("(" .. self type .. ") " .. length)
 		?decode(seq read(self length), root)
-		self
 	)
 
-	decode := method(sc, root,
-		self type println
-		self
-	)
+	decode := method(sc, root, nil)
 )
 
 
@@ -170,7 +227,7 @@ TAGS := Chunk clone do (
 			s println
 		)
 
-		root lastLayer setTags(tags)
+		root setTags(tags)
 		self
 	)
 )
@@ -185,7 +242,7 @@ LAYR := Chunk clone do (
 
 		layer setNumber(l at(0))
 		layer setFlags(l at(1))
-		layer setPivot(Vector clone setX(l at(2)) setY(l at(3)) setZ(l at(4)))
+		layer setPivot(Vector clone setItemType("float32") setX(l at(2)) setY(l at(3)) setZ(l at(4)))
 		layer setName(l at(5))
 		if(l size > 6, layer setParent(l at(0)) )
 
@@ -199,13 +256,16 @@ LAYR := Chunk clone do (
 PNTS := Chunk clone do (
 	decode := method(sc, root,
 		points := List clone
-
+		layer := root lastLayer
+		pivot := layer pivot
 		while(sc isAtEnd not,
-			points append(sc unpack(sc cursor, "*fff"))
+			p := sc unpack(sc cursor, "*fff")
+			p = Vector clone setItemType("float32") setX(p at(0) - pivot x) setY(p at(1) - pivot y) setZ(p at(2) - pivot z)
+			points append(p)
 			sc advance(12)
 		)
 
-		root lastLayer setPoints(points)
+		layer setPoints(points)
 		self
 	)
 )
@@ -247,7 +307,6 @@ VMAP := Chunk clone do (
 	/*PICK
 	WGHT
 	MNVW
-	TXUV
 	RGB, RGBA
 	MORF
 	SPOT*/
@@ -265,19 +324,131 @@ VMAP := Chunk clone do (
 POLS := Chunk clone do (
 	// POLS { type[ID4], ( numvert+flags[U2], vert[VX] # numvert )* }
 
+	testOutside := method(p, pnts, reflx,
+		reflx isEmpty ifTrue(return true)
+		// P-A = b(B-A) + c(C-A)
+		// R=P-A, S=B-A, T=C-A
+		// R = bS + cT
+		A := pnts at(p prev)
+		S := pnts at(p) - A
+		T := pnts at(p next) - A
+		div := 1 / ((S x * T y) - (S y * T x))		//(SxTy - SyTx)
+
+		reflx map(P,
+			R := pnts at(P) - A
+			b := ((R x * T y) - (R y * T x)) * div	//(RxTy - RyTx) / (SxTy - SyTx)
+			c := ((S x * R y) - (S y * R x)) * div	//(SxRy - SyRx) / (SxTy - SyTx)
+			b <= 0 or c <= 0 or (b + c) > 1		//true == P is out
+
+		) reduce(and)
+	)
+
+	testReflex := method(pnts, p,
+		A := pnts at(p prev)
+		B := pnts at(p)
+		C := pnts at(p next)
+		dp := (A - B) perpDotProduct(C - B)
+		//("::::::::::::: testing reflex " .. p .. ": " .. dp) println
+		dp < 0
+	)
+
+	clockTest := method(verts, pnts,
+		area := 0
+		verts foreach(p,
+			area = area + pnts at(p next) perpDotProduct(pnts at(p))
+		)
+		area //clockwise: <0
+		//verts map(p, pnts at(p next) perpDotProduct(pnts at(p)) reduce(+)
+	)
+
+	triangulate := method(root, verts, pols,
+		pnts := root lastLayer points
+		reflx := List clone
+		convex := List clone
+		ears := List clone
+		
+		(clockTest(verts, pnts) < 0) ifTrue(verts = verts reverse)
+			
+		verts foreach(p,
+			if( testReflex(pnts, p), reflx append(p), convex append(p) )
+		)
+
+		convex foreach(i, p,
+			testOutside(p, pnts, reflx) ifTrue(ears append(p))
+		)
+
+		if(ears isEmpty,
+			pivot := verts removeFirst
+			n := verts removeFirst
+			verts size repeat (
+				tri := List clone
+				tri append(pivot)
+				tri append(n)
+				n = verts removeFirst
+				tri append(n)
+				pols append(tri)
+			)
+		,
+			while(verts size > 3,
+				//"EARS: " print; ears println
+				//"REFLX: " print; reflx println
+				//"VERTS: " print; verts println
+				v := ears removeFirst
+				a := v prev
+				b := v next
+				//writeln("f " .. (a+1)  .. " " .. (v+1) .. " " .. (b+1))
+				//writeln("removing EAR: " .. v)
+				//writeln("=====> " .. a .. "->" .. a next .. " " .. b prev .. "<-" .. b)
+				pols append(List with(a, v, b))
+				verts remove(v)
+				//writeln("=====> " .. a .. "->" .. a next .. " " .. b prev .. "<-" .. b)
+
+				if(ears contains(a),
+					testOutside(a, pnts, reflx) ifFalse(ears remove(a))
+				,
+					testReflex(pnts, a) ifFalse(
+						reflx remove(a)
+						testOutside(a, pnts, reflx) ifTrue(ears prepend(a))
+					)
+				)
+
+				if(ears contains(b),
+					testOutside(b, pnts, reflx) ifFalse(ears remove(b))
+				,
+					testReflex(pnts, b) ifFalse(
+						reflx remove(b)
+						testOutside(b, pnts, reflx) ifTrue(ears append(b))
+					)
+				)
+				//"--------------------------------------" println
+			)
+
+			//writeln("f " .. (verts at(0)+1)  .. " " .. (verts at(1)+1) .. " " .. (verts at(2)+1))
+			pols append(verts)
+		)
+	)
+
 	FACE := method(sc, root,
 		pols := List clone
 		verts := nil
 		nv := nil
+		i := 1
 		while(sc isAtEnd not,
-			verts = List clone
-			nv = sc unpack(sc cursor, "*H") first & 0x3FF ; sc advance(2)
+			verts = LinkList clone
+			nv = sc unpack(sc cursor, "*H") first ; sc advance(2)
+			flags := nv & 0xf600
+			nv = nv &0x3ff
 			nv repeat(
 				verts append(decodeVX(sc))
 			)
-			pols append(verts)
+			//("******************************************* " .. i) println
+			//if(i == 52, triangulate(root, verts, pols))
+			//if(i == 11656, triangulate(root, verts, pols))
+			//if(i == 795, triangulate(root, verts, pols))
+			//if(i == 28161, triangulate(root, verts, pols))
+			triangulate(root, verts, pols)
+			i = i + 1
 		)
-
 		pols
 	)
 
@@ -289,8 +460,8 @@ POLS := Chunk clone do (
 
 	decode := method(sc, root,
 		t := self getSlot(sc read(4))
-
 		root lastLayer setPols(t(sc, root))
+		//System exit
 		self
 	)
 )
@@ -299,10 +470,19 @@ PTAG := Chunk clone do (
 	//PTAG { type[ID4], ( poly[VX], tag[U2] )* }
 
 	SURF := method(sc, root,
-		st := List clone setSize(root lastLayer pols size)
+		//st := List clone setSize(root lastLayer pols size)
+		st := Map clone
 		while(sc isAtEnd not,
-			st atPut(decodeVX(sc), sc unpack(sc cursor, "*H") first)
-			sc advance(2)
+			//st atPut(decodeVX(sc), sc unpack(sc cursor, "*H") first)
+			p := decodeVX(sc)
+			tag := sc unpack(sc cursor, "*H") first asString ; sc advance(2)
+			r := st at(tag)
+			if(r isNil,
+				r = List clone append(p)
+			,
+				r append(p)
+			)
+			st atPut(tag, r)
 		)
 		st
 	)
@@ -358,12 +538,12 @@ CLIP := Chunk clone do (
 
 	STIL := SubChunk clone do (
 		//STIL { name[FNAM0] }
-		/*filename ::= nil
+		filename ::= nil
 		decode := method(sc, root,
 			setFilename(decodeS0(sc))
 			filename println
 			self
-		)*/
+		)
 	)
 
 	XREF := SubChunk clone do (
@@ -424,10 +604,10 @@ CLIP := Chunk clone do (
 
 
 	decode := method(sc, root,
-		//setIndex(sc read(4) unpack("*I") first asString)
-		//subcnk := sc read(4)
-		//subcnk println
-		//clips atPut(index, self getSlot(subcnk) clone read(sc))
+		index := sc read(4) unpack("*I") first asString
+		subcnk := self getSlot(sc read(4))
+		r := subcnk clone read(sc, root)
+		if(r isNil not, root lastLayer clips atPut(index, r))
 
 		self
 	)
@@ -450,71 +630,71 @@ SURF := Chunk clone do (
 	)
 	DIFF := SubChunk clone do (
 		//DIFF { intensity[FP4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	LUMI := SubChunk clone do (
 		//LUMI { intensity[FP4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	SPEC := SubChunk clone do (
 		//SPEC { intensity[FP4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	REFL := SubChunk clone do (
 		//REFL { intensity[FP4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	TRAN := SubChunk clone do (
 		//TRAN { intensity[FP4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	TRNL := SubChunk clone do (
 		//TRNL { intensity[FP4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	GLOS := SubChunk clone do (
 		//GLOS { glossiness[FP4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	SHRP := SubChunk clone do (
 		//SHRP { sharpness[FP4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	BUMP := SubChunk clone do (
 		//BUMP { strength[FP4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	SIDE := SubChunk clone do (
 		//SIDE { sidedness[U2] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	SMAN := SubChunk clone do (
 		//SMAN { max-smoothing-angle[ANG4] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	RFOP := SubChunk clone do (
 		//RFOP { reflection-options[U2] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	RIMG := SubChunk clone do (
 		//RIMG { image[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	RSAN := SubChunk clone do (
 		//RSAN { seam-angle[ANG4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	RBLR := SubChunk clone do (
 		//RBLR { blur-percentage[FP4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	RIND := SubChunk clone do (
 		//RIND { refractive-index[F4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	TROP := SubChunk clone do (
 		//TROP { transparency-options[U2] }
-		decode := method(sc, root, sc unpack("*H"))
+		decode := method(sc, root, sc unpack("*H") first)
 	)
 	TIMD := SubChunk clone do (
 		//TIMG { image[VX] }
@@ -522,19 +702,19 @@ SURF := Chunk clone do (
 	)
 	TBLR := SubChunk clone do (
 		//TBLR { blur-percentage[FP4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	CLRH := SubChunk clone do (
 		//CLRH { color-highlights[FP4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	CLRF := SubChunk clone do (
 		//CLRF { color-filter[FP4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	ADTR := SubChunk clone do (
 		//ADTR { additive[FP4], envelope[VX] }
-		decode := method(sc, root, sc unpack("*f"))
+		decode := method(sc, root, sc unpack("*f") first)
 	)
 	GLOW := SubChunk clone do (
 		//GLOW { type[U2], intensity[F4], intensity-envelope[VX], size[F4], size-envelope[VX] }
@@ -549,8 +729,127 @@ SURF := Chunk clone do (
 		//VCOL { intensity[FP4], envelope[VX], vmap-type[ID4], name[S0] }
 	)
 
-	//BLOK := SubChunk clone do (
-	//)
+	BLOK := SubChunk clone do (
+		//BLOK { header[SUB-CHUNK], attributes[SUB-CHUNK] * }
+		BlockHeaderSubChunk := SubChunk clone do (
+			CHAN := SubChunk clone do (
+				//CHAN { texture-channel[ID4] }
+			)
+			ENAB := SubChunk clone do (
+				//ENAB { enable[U2] }
+			)
+			OPAC := SubChunk clone do (
+				//OPAC { type[U2], opacity[FP4], envelope[VX] }
+			)
+			AXIS := SubChunk clone do (
+				//AXIS { displacement-axis[U2] }
+			)
+			NEGA := SubChunk clone do (
+				//NEGA { enable[U2] }
+			)
+
+			decode := method(sc, root,
+				ordinal := decodeS0(sc)
+				ordinal asString println
+				while(sc isAtEnd not,
+					id := sc read(4)
+					id = self getSlot(id)
+					id read(sc, root)
+				)
+			)
+		)
+
+
+		IMAP := BlockHeaderSubChunk clone do (//an image map texture
+		)
+		PROC := BlockHeaderSubChunk clone do (//a procedural texture
+		)
+		GRAD := BlockHeaderSubChunk clone do (//a gradient texture
+		)
+		SHDR := BlockHeaderSubChunk clone do (//a shader plug-in
+		)
+
+
+		//IMAP and PROC attributes
+		TMAP := SubChunk clone do (
+		)
+
+		//PROC attributes
+		AXIS := SubChunk clone do (
+			//AXIS { axis[U2] }
+		)
+		VALU := SubChunk clone do (
+			//VALU { value[FP4] # (1, 3) }
+		)
+		FUNC := SubChunk clone do (
+			//FUNC { algorithm-name[S0], data[...] }
+		)
+
+		//GRAD attributes
+		PNAM := SubChunk clone do (
+		)
+		INAM := SubChunk clone do (
+			//INAM { item-name[S0] }
+		)
+		GRST := SubChunk clone do (
+			//GRST { input-range[FP4] }
+		)
+		GREN := SubChunk clone do (
+			//GREN { input-range[FP4] }
+		)
+		GRPT := SubChunk clone do (
+			//GRPT { repeat-mode[U2] }
+		)
+		FKEY := SubChunk clone do (
+			//FKEY { ( input[FP4], output[FP4] # 4 )* }
+		)
+		IKEY := SubChunk clone do (
+			//IKEY { interpolation[U2] * }
+		)
+
+		//IMAP attributes
+		IMAG := SubChunk clone do (
+			//IMAG { texture-image[VX] }
+		)
+		PROJ := SubChunk clone do (
+			//PROJ { projection-mode[U2] }
+		)
+		AXIS := SubChunk clone do (
+			//AXIS { texture-axis[U2] }
+		)
+		WRAP := SubChunk clone do (
+			//WRAP { width-wrap[U2], height-wrap[U2] }
+		)
+		WRPW := SubChunk clone do (
+			//WRPW { cycles[FP4], envelope[VX] }
+		)
+		WRPH := SubChunk clone do (
+			//WRPH { cycles[FP4], envelope[VX] }
+		)
+		VMAP := SubChunk clone do (
+			//VMAP { txuv-map-name[S0] }
+		)
+		AAST := SubChunk clone do (
+			//AAST { flags[U2], antialising-strength[FP4] }
+		)
+		PIXB := SubChunk clone do (
+			//PIXB { flags[U2] }
+		)
+		STCK := SubChunk clone do (
+			//STCK { on-off[U2], time[FP4] }
+		)
+		TAMP := SubChunk clone do (
+			//TAMP { amplitude[FP4], envelope[VX] }
+		)
+
+		decode := method(sc, root,
+			while(sc isAtEnd not,
+				h := sc read(4)
+				h = self getSlot(h)
+				h read(sc, root)
+			)
+		)
+	)
 
 	decode := method(sc, root,
 		n := decodeS0(sc) ; n println
@@ -604,18 +903,17 @@ LwoObject := Object clone do (
 
 		sc := SequenceCursor with(f contents)
 
-		Collector setAllocsPerSweep(f size / 4)
+		Collector setAllocsPerSweep(f size)
 
 		f close
 
 		obj := RawObject clone
+		obj lwoFileName := fileName
 
 		form := Lobby getSlot(sc read(4))
 		sc size println
 		form read(sc, obj)
 		sc size println
-
-		obj layers println
 
 		obj
 	)
@@ -626,6 +924,6 @@ LwoObject := Object clone do (
 
 obj := LwoObject read(System args at(1))
 
-obj layers foreach(l,
-	l println
-)
+doRelativeFile("OBJ.io")
+
+OBJ with("lwotest.obj") run(obj)
