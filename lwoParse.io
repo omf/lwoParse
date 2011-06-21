@@ -355,7 +355,7 @@ POLS := Chunk clone do (
 		true
 	)
 
-	testReflex := method(pnts, p,
+	testReflex := method(p, pnts,
 		A := pnts at(p prev)
 		B := pnts at(p)
 		C := pnts at(p next)
@@ -398,10 +398,10 @@ POLS := Chunk clone do (
 		(clockTest(verts, pnts) < 0) ifTrue(verts = verts reverse)
 			
 		verts foreach(p,
-			if( testReflex(pnts, p), reflx append(p), convex append(p) )
+			if( testReflex(p, pnts), reflx append(p), convex append(p) )
 		)
 
-		convex foreach(i, p,
+		convex foreach(p,
 			testOutside(p, pnts, reflx) ifTrue(ears append(p))
 		)
 
@@ -428,7 +428,7 @@ POLS := Chunk clone do (
 				if(ears contains(a),
 					testOutside(a, pnts, reflx) ifFalse(ears remove(a))
 				,
-					testReflex(pnts, a) ifFalse(
+					testReflex(a, pnts) ifFalse(
 						reflx remove(a)
 						testOutside(a, pnts, reflx) ifTrue(ears prepend(a))
 					)
@@ -437,12 +437,11 @@ POLS := Chunk clone do (
 				if(ears contains(b),
 					testOutside(b, pnts, reflx) ifFalse(ears remove(b))
 				,
-					testReflex(pnts, b) ifFalse(
+					testReflex(b, pnts) ifFalse(
 						reflx remove(b)
 						testOutside(b, pnts, reflx) ifTrue(ears append(b))
 					)
 				)
-				ears remove(v)
 			)
 			pols append(verts)
 		)
