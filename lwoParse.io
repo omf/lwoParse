@@ -51,8 +51,20 @@ Vector asString := method(
 )
 Vector asSimpleString := asString
 
+Sequence u := method(at(Lobby u))
+Sequence v := method(at(Lobby v))
+
 Sequence perpDotProduct := method(aVec,
-	(self x * aVec y) - (self y * aVec x)
+	//(self x * aVec y) - (self y * aVec x)
+	(self u * aVec v) - (self v * aVec u)
+)
+
+Sequence crossProduct := method(aVec,
+	v := Vector clone
+	v setX(y * aVec z - z * aVec y)
+	v setY(z * aVec x - x * aVec z)
+	v setZ(x * aVec y - y * aVec x)
+	v
 )
 
 SequenceCursor := Sequence clone do (
@@ -332,24 +344,23 @@ POLS := Chunk clone do (
 		A := pnts at(p prev)
 		S := pnts at(p) - A
 		T := pnts at(p next) - A
-		div := 1 / ((S x * T y) - (S y * T x))		//(SxTy - SyTx)
+		div := 1 / ((S u * T v) - (S v * T u))		//(SxTy - SyTx)
 
-		reflx map(P,
+		reflx foreach(P,
 			R := pnts at(P) - A
-			b := ((R x * T y) - (R y * T x)) * div	//(RxTy - RyTx) / (SxTy - SyTx)
-			c := ((S x * R y) - (S y * R x)) * div	//(SxRy - SyRx) / (SxTy - SyTx)
-			b <= 0 or c <= 0 or (b + c) > 1		//true == P is out
-
-		) reduce(and)
+			b := ((R u * T v) - (R v * T u)) * div	//(RxTy - RyTx) / (SxTy - SyTx)
+			c := ((S u * R v) - (S v * R u)) * div	//(SxRy - SyRx) / (SxTy - SyTx)
+			(b <= 0 or c <= 0 or (b + c) > 1) ifFalse(return false)	//true == P is out
+		)
+		true
 	)
 
 	testReflex := method(pnts, p,
 		A := pnts at(p prev)
 		B := pnts at(p)
 		C := pnts at(p next)
-		dp := (A - B) perpDotProduct(C - B)
+		(A - B) perpDotProduct(C - B) < 0
 		//("::::::::::::: testing reflex " .. p .. ": " .. dp) println
-		dp < 0
 	)
 
 	clockTest := method(verts, pnts,
@@ -358,7 +369,23 @@ POLS := Chunk clone do (
 			area = area + pnts at(p next) perpDotProduct(pnts at(p))
 		)
 		area //clockwise: <0
-		//verts map(p, pnts at(p next) perpDotProduct(pnts at(p)) reduce(+)
+	)
+
+	findDominantAxis := method(verts, pnts,
+		v := verts first
+		N := pnts at(v next) - pnts at(v)
+		P := pnts at(v prev) - pnts at(v)
+		C := N crossProduct(P) abs
+		Lobby u := 1
+		Lobby v := 2
+		if(C y > C x,
+			Lobby u := 0
+			Lobby v := 2
+		)
+		if(C z > C y,
+			Lobby u := 1
+			Lobby v := 2
+		)
 	)
 
 	triangulate := method(root, verts, pols,
@@ -366,6 +393,8 @@ POLS := Chunk clone do (
 		reflx := List clone
 		convex := List clone
 		ears := List clone
+
+		findDominantAxis(verts, pnts)
 		
 		(clockTest(verts, pnts) < 0) ifTrue(verts = verts reverse)
 			
@@ -393,6 +422,7 @@ POLS := Chunk clone do (
 				//"EARS: " print; ears println
 				//"REFLX: " print; reflx println
 				//"VERTS: " print; verts println
+				//v := ears removeFirst
 				v := ears removeFirst
 				a := v prev
 				b := v next
@@ -432,22 +462,20 @@ POLS := Chunk clone do (
 		pols := List clone
 		verts := nil
 		nv := nil
-		i := 1
+		//i := 1
 		while(sc isAtEnd not,
 			verts = LinkList clone
-			nv = sc unpack(sc cursor, "*H") first ; sc advance(2)
-			flags := nv & 0xf600
-			nv = nv &0x3ff
+			nv = sc unpack(sc cursor, "*H") first & 0x3ff; sc advance(2)
 			nv repeat(
 				verts append(decodeVX(sc))
 			)
 			//("******************************************* " .. i) println
 			//if(i == 52, triangulate(root, verts, pols))
-			//if(i == 11656, triangulate(root, verts, pols))
+			//if(i == 11656, triangulate(root, verts, pols) ; System exit)
 			//if(i == 795, triangulate(root, verts, pols))
 			//if(i == 28161, triangulate(root, verts, pols))
+			//i = i + 1
 			triangulate(root, verts, pols)
-			i = i + 1
 		)
 		pols
 	)
@@ -540,8 +568,10 @@ CLIP := Chunk clone do (
 		//STIL { name[FNAM0] }
 		filename ::= nil
 		decode := method(sc, root,
-			setFilename(decodeS0(sc))
-			filename println
+			sc cursor println
+			sc unpack(sc cursor, "s") first println
+			//setFilename(decodeS0(sc))
+			//filename println
 			self
 		)
 	)
