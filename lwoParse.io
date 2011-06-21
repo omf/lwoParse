@@ -360,7 +360,6 @@ POLS := Chunk clone do (
 		B := pnts at(p)
 		C := pnts at(p next)
 		(A - B) perpDotProduct(C - B) < 0
-		//("::::::::::::: testing reflex " .. p .. ": " .. dp) println
 	)
 
 	clockTest := method(verts, pnts,
@@ -383,8 +382,8 @@ POLS := Chunk clone do (
 			Lobby v := 2
 		)
 		if(C z > C y,
-			Lobby u := 1
-			Lobby v := 2
+			Lobby u := 0
+			Lobby v := 1
 		)
 	)
 
@@ -406,7 +405,8 @@ POLS := Chunk clone do (
 			testOutside(p, pnts, reflx) ifTrue(ears append(p))
 		)
 
-		if(ears isEmpty,
+		if(reflx isEmpty,
+			//convex polygon
 			pivot := verts removeFirst
 			n := verts removeFirst
 			verts size repeat (
@@ -419,19 +419,11 @@ POLS := Chunk clone do (
 			)
 		,
 			while(verts size > 3,
-				//"EARS: " print; ears println
-				//"REFLX: " print; reflx println
-				//"VERTS: " print; verts println
-				//v := ears removeFirst
 				v := ears removeFirst
 				a := v prev
 				b := v next
-				//writeln("f " .. (a+1)  .. " " .. (v+1) .. " " .. (b+1))
-				//writeln("removing EAR: " .. v)
-				//writeln("=====> " .. a .. "->" .. a next .. " " .. b prev .. "<-" .. b)
 				pols append(List with(a, v, b))
 				verts remove(v)
-				//writeln("=====> " .. a .. "->" .. a next .. " " .. b prev .. "<-" .. b)
 
 				if(ears contains(a),
 					testOutside(a, pnts, reflx) ifFalse(ears remove(a))
@@ -450,31 +442,20 @@ POLS := Chunk clone do (
 						testOutside(b, pnts, reflx) ifTrue(ears append(b))
 					)
 				)
-				//"--------------------------------------" println
+				ears remove(v)
 			)
-
-			//writeln("f " .. (verts at(0)+1)  .. " " .. (verts at(1)+1) .. " " .. (verts at(2)+1))
 			pols append(verts)
 		)
 	)
 
 	FACE := method(sc, root,
 		pols := List clone
-		verts := nil
-		nv := nil
-		//i := 1
 		while(sc isAtEnd not,
-			verts = LinkList clone
-			nv = sc unpack(sc cursor, "*H") first & 0x3ff; sc advance(2)
+			verts := LinkList clone
+			nv := sc unpack(sc cursor, "*H") first & 0x3ff; sc advance(2)
 			nv repeat(
 				verts append(decodeVX(sc))
 			)
-			//("******************************************* " .. i) println
-			//if(i == 52, triangulate(root, verts, pols))
-			//if(i == 11656, triangulate(root, verts, pols) ; System exit)
-			//if(i == 795, triangulate(root, verts, pols))
-			//if(i == 28161, triangulate(root, verts, pols))
-			//i = i + 1
 			triangulate(root, verts, pols)
 		)
 		pols
@@ -489,7 +470,6 @@ POLS := Chunk clone do (
 	decode := method(sc, root,
 		t := self getSlot(sc read(4))
 		root lastLayer setPols(t(sc, root))
-		//System exit
 		self
 	)
 )
@@ -568,10 +548,8 @@ CLIP := Chunk clone do (
 		//STIL { name[FNAM0] }
 		filename ::= nil
 		decode := method(sc, root,
-			sc cursor println
-			sc unpack(sc cursor, "s") first println
-			//setFilename(decodeS0(sc))
-			//filename println
+			setFilename(decodeS0(sc))
+			filename println
 			self
 		)
 	)
